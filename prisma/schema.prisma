@@ -1,0 +1,235 @@
+// Academic Knowledge Repository - Prisma Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User accounts with Role-Based Access Control (Admin, Contributor, Student)
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  name         String
+  passwordHash String
+  role         String          @default("STUDENT") // "ADMIN", "CONTRIBUTOR", "STUDENT"
+  avatar       String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  uploadedPapers QuestionPaper[] @relation("UserUploads")
+  bookmarks      Bookmark[]
+
+  @@map("users")
+}
+
+// Academic Departments (CSE, ECE, EEE, ME, etc.)
+model Department {
+  id          String    @id @default(cuid())
+  code        String    @unique // e.g. "CSE", "ECE"
+  name        String    // e.g. "Computer Science and Engineering"
+  description String?
+  icon        String?
+  createdAt   DateTime  @default(now())
+
+  subjects    Subject[]
+  teachers    Teacher[]
+
+  @@map("departments")
+}
+
+// Semester groupings (1 through 8)
+model Semester {
+  id        String    @id @default(cuid())
+  number    Int       @unique // 1 - 8
+  label     String    // e.g. "Semester 5"
+
+  subjects  Subject[]
+
+  @@map("semesters")
+}
+
+// Academic Subjects (e.g. DBMS, Operating Systems)
+model Subject {
+  id              String           @id @default(cuid())
+  code            String           @unique // e.g. "CS501"
+  name            String           // e.g. "Database Management Systems"
+  departmentId    String
+  semesterId      String
+  credits         Int              @default(4)
+  description     String?
+  fullSyllabus    String?
+  syllabusUnits   String?          // JSON encoded list of units: [{ unitNumber, title, description, topics }]
+  coordinator     String?          // e.g. "Dr. Ravi Kumar"
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  department      Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  semester        Semester         @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  courseOfferings CourseOffering[]
+  bookmarks       Bookmark[]
+
+  @@index([departmentId])
+  @@index([semesterId])
+  @@index([name])
+  @@map("subjects")
+}
+
+// Professors / Instructors
+model Teacher {
+  id           String           @id @default(cuid())
+  name         String           // e.g. "Dr. Ravi Kumar"
+  title        String           @default("Professor") // e.g. "Associate Professor"
+  email        String?
+  departmentId String
+  bio          String?
+  cabin        String?
+  avatar       String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  department   Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  courseOfferings CourseOffering[]
+
+  @@index([name])
+  @@map("teachers")
+}
+
+// Academic Year (e.g. 2025-26, 2024-25)
+model AcademicYear {
+  id        String           @id @default(cuid())
+  label     String           @unique // e.g. "2025-26"
+  isCurrent Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  courseOfferings CourseOffering[]
+
+  @@map("academic_years")
+}
+
+// Course Offering linking Subject + Teacher + Academic Year
+model CourseOffering {
+  id                String             @id @default(cuid())
+  subjectId         String
+  teacherId         String
+  academicYearId    String
+  createdAt         DateTime           @default(now())
+
+  subject           Subject            @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher           Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  academicYear      AcademicYear       @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  
+  assessmentPattern AssessmentPattern?
+  questionPapers    QuestionPaper[]
+
+  @@unique([subjectId, teacherId, academicYearId])
+  @@index([subjectId])
+  @@index([teacherId])
+  @@index([academicYearId])
+  @@map("course_offerings")
+}
+
+// Dynamic Assessment Pattern per Course Offering
+model AssessmentPattern {
+  id               String                @id @default(cuid())
+  courseOfferingId String                @unique
+  totalMarks       Int                   @default(100)
+  note             String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  courseOffering   CourseOffering        @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
+  components       AssessmentComponent[]
+
+  @@map("assessment_patterns")
+}
+
+// Components inside an Assessment Pattern (e.g. CT-1: 20, CT-2: 20, Project: 20, Final: 40)
+model AssessmentComponent {
+  id                  String            @id @default(cuid())
+  assessmentPatternId String
+  name                String            // e.g. "CT-1", "CT-2", "Final Assessment", "Project", "Assignment", "Quiz"
+  type                String            @default("TEST") // "TEST", "FINAL", "PROJECT", "ASSIGNMENT", "QUIZ", "ATTENDANCE"
+  maxMarks            Int               // e.g. 20
+  order               Int               @default(0)
+
+  assessmentPattern   AssessmentPattern @relation(fields: [assessmentPatternId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentPatternId])
+  @@map("assessment_components")
+}
+
+// Question Papers
+model QuestionPaper {
+  id               String         @id @default(cuid())
+  courseOfferingId String
+  assessmentType   String         // "CT-1", "CT-2", "Final Assessment", "Midterm", "End Semester", "Assignment", "Quiz", "Model Paper", "Other"
+  title            String
+  examDate         String?        // e.g. "2025-10-15"
+  maxMarks         Int            @default(100)
+  durationMinutes  Int            @default(120)
+  fileUrl          String
+  fileName         String
+  fileSize         Int            @default(0) // in bytes
+  pageCount        Int            @default(1)
+  answerKeyUrl     String?
+  solutionNotes    String?
+  status           String         @default("APPROVED") // "APPROVED", "PENDING_REVIEW"
+  uploadedById     String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  courseOffering   CourseOffering @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
+  uploadedBy       User           @relation("UserUploads", fields: [uploadedById], references: [id])
+  paperTags        PaperTag[]
+  bookmarks        Bookmark[]
+
+  @@index([courseOfferingId])
+  @@index([assessmentType])
+  @@index([status])
+  @@map("question_papers")
+}
+
+// Tag taxonomy (#important, #sql, #transactions, #unit-3, etc.)
+model Tag {
+  id        String     @id @default(cuid())
+  name      String     @unique // e.g. "important", "sql"
+  paperTags PaperTag[]
+
+  @@map("tags")
+}
+
+// Association between Question Paper and Tag
+model PaperTag {
+  id       String        @id @default(cuid())
+  paperId  String
+  tagId    String
+
+  paper    QuestionPaper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  tag      Tag           @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, tagId])
+  @@index([paperId])
+  @@index([tagId])
+  @@map("paper_tags")
+}
+
+// User Bookmarks (saved papers and subjects)
+model Bookmark {
+  id        String         @id @default(cuid())
+  userId    String
+  paperId   String?
+  subjectId String?
+  createdAt DateTime       @default(now())
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper     QuestionPaper? @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  subject   Subject?       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, paperId, subjectId])
+  @@index([userId])
+  @@map("bookmarks")
+}
